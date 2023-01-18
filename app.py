@@ -19,7 +19,7 @@ def planification():
             return jsonify({'status': 'error', 'message': 'Invalid JSON payload'}), 400
         except Exception as e:
             logging.error(e)
-            return jsonify({'status': 'error', 'message': 'An error occured'})
+            return jsonify({'status': 'error', 'message': 'An error occured'}), 500
 
 
 if __name__ == '__main__':

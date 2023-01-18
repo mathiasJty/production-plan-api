@@ -1,6 +1,6 @@
 # Production Plan API
 
-This is a Flask API, exposed on the port 8888, that receives a JSON payload, processes it using the `production_plan` module and returns the result in json format.
+This is a Flask API, exposed on the port 8888, that receives a JSON payload, processes it using the `production_plan` module and returns the result in JSON format.
 
 ## Endpoints
 

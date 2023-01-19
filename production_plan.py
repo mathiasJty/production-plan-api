@@ -52,7 +52,7 @@ def production_plan(data_load):
             sum_p -= arg
         return sum_p
 
-    # will be used to switch off some factories it creates a list of all the binary number from 0 to upper
+    # will be used to switch off some factories, it creates a list of all the binary number from 0 to upper
     # with length number of digit (e.g. upper =4 , length = 2 return [['0','0'],['0','1'],['1','0'],['1','1']])
     def generate_bin_count(upper, length):
         list_bin = []
@@ -68,10 +68,10 @@ def production_plan(data_load):
 
     x0 = np.zeros(len(df.index))  # Start of the minimization all p are null
     list_index_gas = df.loc[df["pmin"] != 0].index.values
-    # List for switching the bounds to be 0,0 of the gasfired (state turned off)
+    # List for switching the bounds to be 0,0 of the power plants with pmin !=0 (state turned off)
     # all possible combination of 0 and 1 => 0 off / 1 on
     switch = generate_bin_count(2 ** (len(list_index_gas)), len(list_index_gas))
-    minimal_cost = math.inf
+    minimal_cost = math.inf # Cost initialized to +inf
 
     # There is 2^(number of switchable off) possibilities
     for item in switch:
@@ -81,13 +81,14 @@ def production_plan(data_load):
 
         con = {'type': 'eq', 'fun': constraint}
 
-        # using a cyclic permuted list to define the off-plant
+        # using the list of the binary number from 0 to 2^(number of plant with pmin != 0), we can set the 
+        # some plants off, this way we will be able to check the best configuration
         for i in range(len(list_index_gas)):
             bnds[list_index_gas[i]] = (
                 bnds[list_index_gas[i]][0] * int(item[i]), bnds[list_index_gas[i]][1] * int(item[i]))
 
         this_minimization = minimize(cost_min, x0, bounds=bnds, constraints=con)
-        # Now we verify check which minimization cost the least and where the constraint (i.e. the sum of the p) is 0
+        # Now we check which minimization cost the least and where the constraint (i.e. the sum of the p) is 0
         if minimal_cost > this_minimization.fun and constraint(this_minimization.x) < 0.1:
             minimal_cost = this_minimization.fun
             list_p = ['%.2f' % elem for elem in this_minimization.x]

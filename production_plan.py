@@ -88,7 +88,7 @@ def production_plan(data_load):
                 bnds[list_index_gas[i]][0] * int(item[i]), bnds[list_index_gas[i]][1] * int(item[i]))
 
         this_minimization = minimize(cost_min, x0, bounds=bnds, constraints=con)
-        # Now we check which minimization cost the least and where the constraint (i.e. the sum of the p) is 0
+        # Now we check which minimization cost the least and where the constraint (i.e. the load minus the sum of the p) is 0
         if minimal_cost > this_minimization.fun and constraint(this_minimization.x) < 0.1:
             minimal_cost = this_minimization.fun
             list_p = ['%.2f' % elem for elem in this_minimization.x]

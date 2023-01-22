@@ -1,105 +1,109 @@
 import pandas as pd
-from scipy.optimize import minimize
-import numpy as np
 import math
+from pandas import DataFrame
 
 
 def production_plan(data_load):
     # Creating a DataFrame with the plant information to which we will add cost/MWh
     # and calculate pmax base on the fuels available (for the wind)
-    if not data_load:
-        return [{'data': 'error'}]
-
-    df = pd.DataFrame(data_load["powerplants"])
+    df: DataFrame = pd.DataFrame.from_dict(data_load['powerplants'])
 
     # Calculation of the cost per unit (MWh) produced
-    list_cost = []
+    list_cost = [0] * len(df)
 
-    for i in range(len(data_load["powerplants"])):
-        plant = data_load["powerplants"][i]
-        if plant['type'] == 'gasfired':
-            # The cost per mwh for a gasfired power plant is cost of gas / efficiency
-            # + 0.3 (ton of CO2 rejected per mwh produced) * price of CO2/ton
-            list_cost += [data_load["fuels"]["gas(euro/MWh)"] / data_load["powerplants"][i]["efficiency"] + 0.3 *
-                          data_load["fuels"]["co2(euro/ton)"]]
-        elif plant['type'] == 'turbojet':
-            list_cost += [data_load["fuels"]["kerosine(euro/MWh)"] / data_load["powerplants"][i]["efficiency"]]
-        else:
-            list_cost += [0]
+    df['cost_per_mwh'] = list_cost
+
+    df.loc[df['type'] == 'gasfired', 'cost_per_mwh'] = [data_load["fuels"]["gas(euro/MWh)"] / data["efficiency"] + 0.3 *
+                                                        data_load["fuels"]["co2(euro/ton)"] for data in
+                                                        data_load["powerplants"] if data["type"] == 'gasfired']
+
+    df.loc[df['type'] == 'turbojet', 'cost_per_mwh'] = [data_load["fuels"]["kerosine(euro/MWh)"] / data["efficiency"]
+                                                        for data in
+                                                        data_load["powerplants"] if data["type"] == 'turbojet']
 
     # Calculation of pmax for windturbine
 
     df.loc[df.type == 'windturbine', 'pmax'] = df.loc[df.type == 'windturbine', 'pmax'] * data_load["fuels"][
         "wind(%)"] / 100
 
-    df['cost_per_mwh'] = list_cost
+    # Reorder the data frame with growing cost/mwh
+
+    df = df.sort_values(by=['cost_per_mwh']).reset_index()
+    del df['index']
+
+    # And we will also calculate the plim, which define the upper limit of when we need to switch to a higher cost
+    # energy per mwh to lower the total cost
+
+    df['plim'] = df['pmin']
+
+    df_cost = df[['cost_per_mwh', 'pmin', 'plim']].drop_duplicates().reset_index()
+    del df_cost["index"]
+
+    plim_list = []
+    for i in range(0, len(df_cost)):
+        if df_cost.loc[i, 'cost_per_mwh'] != 0 and df_cost.loc[i - 1, 'cost_per_mwh'] != 0:
+            df_cost.loc[i, 'plim'] = df_cost.loc[i - 1, 'pmin'] * df_cost.loc[i - 1, 'cost_per_mwh'] / df_cost.loc[
+                i, 'cost_per_mwh']
+        else:
+            df_cost.loc[i, 'plim'] = math.inf
+        plim_list += [df_cost.loc[i, 'plim']] * len(df.loc[df["cost_per_mwh"] == df_cost.loc[i, 'cost_per_mwh']])
+
+    df['plim'] = plim_list
 
     load = data_load['load']
 
     list_p = []  # contains the final p
 
-    # function representing the total cost for given values of p (args) that we will have to minimize (our objective)
-    def cost_min(args):
-        sum_cost = 0
-        for i in range(len(args)):
-            sum_cost += args[i] * df.loc[df.index == i]['cost_per_mwh'].values[0]
-        return sum_cost
+    # According to the value of the 0 cost power plant, the decision will be made of which power plant to activate next
+    # in order to minimize the cost of production
 
-    # the minimization constraint (i.e. sum of p should be equal to the load)
-    def constraint(args):
-        sum_p = load
-        for arg in args:
-            sum_p -= arg
-        return sum_p
+    no_cost_pmax = df.loc[df['cost_per_mwh'] == 0, 'pmax'].sum()
 
-    # will be used to switch off some factories, it creates a list of all the binary number from 0 to upper
-    # with length number of digit (e.g. upper =4 , length = 2 return [['0','0'],['0','1'],['1','0'],['1','1']])
-    def generate_bin_count(upper, length):
-        list_bin = []
+    to_be_reached = load
 
-        for i in range(upper):
+    if no_cost_pmax < load:  # If the 0 cost energy is not sufficient
+        # Then we have to decide which energy to take
+        df2 = pd.concat([df.loc[(df['cost_per_mwh'] != 0) & (df['plim'] > load - no_cost_pmax)].sort_values(by='plim'),
+                         df.loc[(df['cost_per_mwh'] != 0) & (df['plim'] < load - no_cost_pmax)]])
+        df2.reset_index(inplace=True)  #
+        del df2['index']
 
-            bits = bin(i).replace("0b", "")
-            while len(bits) != length:
-                bits = '0' + bits
+        list_p += df.loc[df['cost_per_mwh'] == 0, ['pmax', 'name']].rename(columns={'pmax': 'p'}).to_dict(
+            orient='records')
+        to_be_reached -= df.loc[df['cost_per_mwh'] == 0, 'pmax'].sum()
+    else:  # If the 0 cost energy is sufficient
+        df2 = df
 
-            list_bin += [list(bits)]
-        return (list_bin)
+    i = 0
 
-    x0 = np.zeros(len(df.index))  # Start of the minimization all p are null
-    list_index_gas = df.loc[df["pmin"] != 0].index.values
-    # List for switching the bounds to be 0,0 of the power plants with pmin !=0 (state turned off)
-    # all possible combination of 0 and 1 => 0 off / 1 on
-    switch = generate_bin_count(2 ** (len(list_index_gas)), len(list_index_gas))
-    minimal_cost = math.inf # Cost initialized to +inf
+    while i < len(df2) and to_be_reached - df2.loc[i, 'pmax'] >= 0:  # Adding pmax until the load is reached
+        p = df2.loc[i, 'pmax']
+        list_p += [{'p': p, 'name': df2.loc[i, 'name']}]
+        to_be_reached -= p
+        i += 1
+    if i < len(df2) and to_be_reached < df2.loc[i, 'pmin']:
+        # if the pmin is not sufficient we will take some mwh from a 0 cost source
+        list_p += [{'p': df2.loc[i, 'pmin'], 'name': df2.loc[i, 'name']}]
+        list_p[-2]['p'] -= list_p[-1]['p'] - to_be_reached
+        j = -2
+        while list_p[j]['p'] < 0 and abs(j)< len(list_p):
+            list_p[j-1]['p'] += list_p[j]['p']
+            list_p[j]['p'] = 0
 
-    # There is 2^(number of switchable off) possibilities
-    for item in switch:
+    elif i < len(df2):
+        list_p += [{'p': to_be_reached, 'name': df2.loc[i, 'name']}]
 
-        bnds = [(df.loc[df.index == i]['pmin'].values[0], df.loc[df.index == i]['pmax'].values[0])
-                     for i in range(len(df.index))]
+    list_p += [{
+        'p': 0,
+        'name': df.loc[df.index == i]['name'].values[0]  # to be consistent all numbers shall be of type float
+    } for i in range(len(df) - len(list_p))]
 
-        con = {'type': 'eq', 'fun': constraint}
+    ''' Dealing with the numpy.float64 types that raised some errors'''
 
-        # using the list of the binary number from 0 to 2^(number of plant with pmin != 0), we can set the 
-        # some plants off, this way we will be able to check the best configuration
-        for i in range(len(list_index_gas)):
-            bnds[list_index_gas[i]] = (
-                bnds[list_index_gas[i]][0] * int(item[i]), bnds[list_index_gas[i]][1] * int(item[i]))
+    list_p = [{'name': item['name'], 'p': float(round(item['p'],3))} for item in list_p]
 
-        this_minimization = minimize(cost_min, x0, bounds=bnds, constraints=con)
-        # Now we check which minimization cost the least and where the constraint (i.e. the load minus the sum of the p) is 0
-        if minimal_cost > this_minimization.fun and constraint(this_minimization.x) < 0.1:
-            minimal_cost = this_minimization.fun
-            list_p = ['%.2f' % elem for elem in this_minimization.x]
+    return list_p
 
-        production_plan = []
-        for i in range(len(list_p)):
-            production_plan.append({
-                'name': df.loc[df.index == i]['name'].values[0],
-                'p': list_p[i]
-            })
-    return production_plan
 
 if __name__ == '__main__':
     production_plan(data_load={})

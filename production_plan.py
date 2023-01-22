@@ -95,8 +95,8 @@ def production_plan(data_load):
 
     list_p += [{
         'p': 0,
-        'name': df.loc[df.index == i]['name'].values[0]  # to be consistent all numbers shall be of type float
-    } for i in range(len(df) - len(list_p))]
+        'name': df2.loc[df2.index == i+j+1]['name'].values[0]
+    } for j in range(len(df) - len(list_p))]
 
     ''' Dealing with the numpy.float64 types that raised some errors'''
 
